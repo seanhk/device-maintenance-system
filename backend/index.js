@@ -1,135 +1,132 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
 const cors = require('cors');
+const mysql = require('mysql2');
 const multer = require('multer');
-const XLSX = require('xlsx');
-const upload = multer({ dest: 'uploads/' });
-const fs = require('fs');
+const xlsx = require('xlsx');
+const path = require('path');
 
 const app = express();
+const port = 5000;
+
+// 中间件
 app.use(cors());
 app.use(express.json());
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'device_user',
-  password: process.env.DB_PASS || 'device_pass',
-  database: process.env.DB_NAME || 'device_db',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+// 数据库连接
+const db = mysql.createConnection({
+  host: 'db',           // 如果你用 Docker Compose，服务名是 db
+  user: 'root',
+  password: 'your_password', // 替换为你的密码
+  database: 'device_maintenance'
+});
+
+db.connect(err => {
+  if (err) {
+    console.error('数据库连接失败:', err);
+  } else {
+    console.log('成功连接到 MySQL');
+  }
 });
 
 // 创建表（如果不存在）
-async function createTable() {
-  const createTableSQL = `
+db.query(`
   CREATE TABLE IF NOT EXISTS devices (
     id INT AUTO_INCREMENT PRIMARY KEY,
     device_type VARCHAR(100),
     device_name VARCHAR(100) UNIQUE,
-    device_sn VARCHAR(100),
-    device_model VARCHAR(100),
+    serial_number VARCHAR(100),
+    model VARCHAR(100),
     resource_pool VARCHAR(100),
-    data_center VARCHAR(100),
+    room_name VARCHAR(100),
     maintainer VARCHAR(100),
     maintainer_contact VARCHAR(100),
-    maintenance_expiry DATE,
+    warranty_expiry DATE,
     project VARCHAR(100),
-    remarks TEXT
-  ) CHARACTER SET utf8mb4;
+    remark TEXT
+  )
+`);
+
+// 获取设备列表
+app.get('/api/devices', (req, res) => {
+  db.query('SELECT * FROM devices', (err, results) => {
+    if (err) {
+      res.status(500).send(err);
+    } else {
+      res.json(results);
+    }
+  });
+});
+
+// 添加/更新设备（按设备名称作为主键更新）
+app.post('/api/devices', (req, res) => {
+  const d = req.body;
+  const sql = `
+    INSERT INTO devices (device_type, device_name, serial_number, model, resource_pool, room_name, maintainer, maintainer_contact, warranty_expiry, project, remark)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      device_type = VALUES(device_type),
+      serial_number = VALUES(serial_number),
+      model = VALUES(model),
+      resource_pool = VALUES(resource_pool),
+      room_name = VALUES(room_name),
+      maintainer = VALUES(maintainer),
+      maintainer_contact = VALUES(maintainer_contact),
+      warranty_expiry = VALUES(warranty_expiry),
+      project = VALUES(project),
+      remark = VALUES(remark)
   `;
-  const conn = await pool.getConnection();
-  await conn.query(createTableSQL);
-  conn.release();
-}
-
-createTable();
-
-// 查询设备列表，支持筛选
-app.get('/api/devices', async (req, res) => {
-  try {
-    const { filter } = req.query;
-    let sql = 'SELECT * FROM devices';
-    let params = [];
-    if (filter) {
-      sql += ` WHERE device_name LIKE ? OR device_type LIKE ?`;
-      params.push(`%${filter}%`, `%${filter}%`);
-    }
-    const [rows] = await pool.query(sql, params);
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  db.query(sql, [
+    d.device_type, d.device_name, d.serial_number, d.model, d.resource_pool,
+    d.room_name, d.maintainer, d.maintainer_contact, d.warranty_expiry,
+    d.project, d.remark
+  ], (err, result) => {
+    if (err) return res.status(500).send(err);
+    res.json({ success: true });
+  });
 });
 
-// 批量导入或更新设备（以 device_name 为主键）
-app.post('/api/devices/import', upload.single('file'), async (req, res) => {
-  try {
-    const workbook = XLSX.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const data = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+// Excel 导入
+const upload = multer({ dest: 'uploads/' });
+app.post('/api/import', upload.single('file'), (req, res) => {
+  const workbook = xlsx.readFile(req.file.path);
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = xlsx.utils.sheet_to_json(sheet);
 
-    const conn = await pool.getConnection();
-    for (const row of data) {
-      const {
-        device_type,
-        device_name,
-        device_sn,
-        device_model,
-        resource_pool,
-        data_center,
-        maintainer,
-        maintainer_contact,
-        maintenance_expiry,
-        project,
-        remarks
-      } = row;
+  const sql = `
+    INSERT INTO devices (device_type, device_name, serial_number, model, resource_pool, room_name, maintainer, maintainer_contact, warranty_expiry, project, remark)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      device_type = VALUES(device_type),
+      serial_number = VALUES(serial_number),
+      model = VALUES(model),
+      resource_pool = VALUES(resource_pool),
+      room_name = VALUES(room_name),
+      maintainer = VALUES(maintainer),
+      maintainer_contact = VALUES(maintainer_contact),
+      warranty_expiry = VALUES(warranty_expiry),
+      project = VALUES(project),
+      remark = VALUES(remark)
+  `;
 
-      // 插入或更新
-      await conn.query(
-        `INSERT INTO devices (device_type, device_name, device_sn, device_model, resource_pool, data_center, maintainer, maintainer_contact, maintenance_expiry, project, remarks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          device_type=VALUES(device_type),
-          device_sn=VALUES(device_sn),
-          device_model=VALUES(device_model),
-          resource_pool=VALUES(resource_pool),
-          data_center=VALUES(data_center),
-          maintainer=VALUES(maintainer),
-          maintainer_contact=VALUES(maintainer_contact),
-          maintenance_expiry=VALUES(maintenance_expiry),
-          project=VALUES(project),
-          remarks=VALUES(remarks)
-        `,
-        [device_type, device_name, device_sn, device_model, resource_pool, data_center, maintainer, maintainer_contact, maintenance_expiry, project, remarks]
-      );
-    }
-    conn.release();
-    fs.unlinkSync(req.file.path);
-    res.json({ message: '导入成功' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  data.forEach(row => {
+    db.query(sql, [
+      row.device_type || '', row.device_name || '', row.serial_number || '',
+      row.model || '', row.resource_pool || '', row.room_name || '',
+      row.maintainer || '', row.maintainer_contact || '', row.warranty_expiry || null,
+      row.project || '', row.remark || ''
+    ]);
+  });
+
+  res.json({ success: true });
 });
 
-// 导出Excel接口
-app.get('/api/devices/export', async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT * FROM devices');
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Devices');
-
-    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-
-    res.setHeader('Content-Disposition', 'attachment; filename="devices.xlsx"');
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.send(buffer);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// 静态文件（React 前端）
+app.use(express.static(path.join(__dirname, '../frontend/build')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/build/index.html'));
 });
 
-app.listen(3100, () => {
-  console.log('Backend running on port 3100');
+// 启动服务器
+app.listen(port, () => {
+  console.log(`后端服务运行在 http://localhost:${port}`);
 });
