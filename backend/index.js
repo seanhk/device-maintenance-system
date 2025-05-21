@@ -107,6 +107,32 @@ app.post('/api/import', upload.single('file'), (req, res) => {
       project = VALUES(project),
       remark = VALUES(remark)
   `;
+const fs = require('fs');
+
+// Excel 导出
+app.get('/api/export', (req, res) => {
+  const sql = 'SELECT * FROM devices';
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      return res.status(500).send(err);
+    }
+
+    const worksheet = xlsx.utils.json_to_sheet(results);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, worksheet, 'Devices');
+
+    const exportFilePath = path.join(__dirname, 'devices_export.xlsx');
+    xlsx.writeFile(workbook, exportFilePath);
+
+    res.download(exportFilePath, 'devices.xlsx', err => {
+      if (err) {
+        console.error('导出失败：', err);
+      }
+      fs.unlinkSync(exportFilePath); // 删除临时文件
+    });
+  });
+});
 
   data.forEach(row => {
     db.query(sql, [
