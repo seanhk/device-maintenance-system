@@ -1,10 +1,7 @@
-// frontend/src/components/ExportExcel.jsx
 import React from 'react';
 
-const ExportExcel = ({ onExport }) => {
-  return (
-    <button onClick={onExport}>导出Excel</button>
-  );
-};
+function ExportExcel({ onExport }) {
+  return <button onClick={onExport}>导出 Excel</button>;
+}
 
 export default ExportExcel;
