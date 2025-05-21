@@ -1,40 +1,30 @@
 version: '3.8'
-
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: device_mysql
-    restart: always
+  db:
+    image: mysql:5.7
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: device_db
-      MYSQL_USER: device_user
-      MYSQL_PASSWORD: device_pass
+      MYSQL_ROOT_PASSWORD: your_password
+      MYSQL_DATABASE: device_maintenance
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
 
   backend:
-    build: ./backend
-    container_name: device_backend
-    restart: always
-    environment:
-      DB_HOST: mysql
-      DB_USER: device_user
-      DB_PASS: device_pass
-      DB_NAME: device_db
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
     ports:
-      - "3100:3100"
+      - "5000:5000"
     depends_on:
-      - mysql
+      - db
 
   frontend:
-    build: ./frontend
-    container_name: device_frontend
-    restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     ports:
-      - "5000:80"
+      - "3000:80"
     depends_on:
       - backend
 
