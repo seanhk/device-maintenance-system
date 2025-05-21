@@ -1,4 +1,3 @@
-// frontend/src/App.js
 import React, { useState, useEffect } from 'react';
 import DeviceTable from './components/DeviceTable';
 import ImportExcel from './components/ImportExcel';
@@ -11,7 +10,7 @@ function App() {
     fetch('/api/devices')
       .then(res => res.json())
       .then(data => setDevices(data))
-      .catch(err => console.error(err));
+      .catch(console.error);
   }, []);
 
   const handleImport = (file) => {
